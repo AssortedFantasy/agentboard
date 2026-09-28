@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Agentboard decision workshop</title><link rel="stylesheet" href="style.css"></head>
+<body class="deck"><header><a href="index.html">Agentboard / decision workshop</a><span id="topic"></span></header><main id="slides"></main><footer><span id="progress" aria-live="polite"></span><span class="hint">← → or Space to navigate · Tab moves between controls</span><nav aria-label="Slides"><button id="prev">Previous</button><button id="next">Next</button></nav></footer><script>
+const files={'01':'01-runtime.js','02':'02-storage.js','03':'03-seen.js','04':'04-cli.js'};
+const id=new URLSearchParams(location.search).get('deck')||'01';
+const script=document.createElement('script');script.src=files[id]||files['01'];script.onload=()=>{
+const deck=window.DECK;document.title=deck.title+' | Agentboard';document.querySelector('#topic').textContent=deck.title;
+document.querySelector('#slides').innerHTML=deck.slides.map((s,i)=>`<section class="slide" aria-labelledby="title-${i}" hidden><div class="eyebrow">${deck.label||'Decision '+deck.id+' / proposal'}</div><h1 id="title-${i}" tabindex="-1">${s.title}</h1><div class="body">${s.html}</div></section>`).join('');
+const slides=[...document.querySelectorAll('.slide')];let current=0;
+function show(n,focus=false){current=Math.max(0,Math.min(slides.length-1,n));slides.forEach((s,i)=>s.hidden=i!==current);document.querySelector('#progress').textContent=`${current+1} / ${slides.length} · ${deck.duration||'about 3–4 minutes total'}`;document.querySelector('#prev').disabled=current===0;document.querySelector('#next').disabled=current===slides.length-1;history.replaceState(null,'','#'+(current+1));if(focus)slides[current].querySelector('h1').focus();window.scrollTo(0,0);}
+document.querySelector('#prev').onclick=()=>show(current-1,true);document.querySelector('#next').onclick=()=>show(current+1,true);
+document.addEventListener('keydown',e=>{if(e.altKey||e.ctrlKey||e.metaKey||/INPUT|TEXTAREA|SELECT/.test(e.target.tagName))return;if(e.key==='ArrowRight'||e.key==='PageDown'||(e.key===' '&&!/BUTTON|A/.test(e.target.tagName))){e.preventDefault();show(current+1,true);}if(e.key==='ArrowLeft'||e.key==='PageUp'){e.preventDefault();show(current-1,true);}if(e.key==='Home'){e.preventDefault();show(0,true);}if(e.key==='End'){e.preventDefault();show(slides.length-1,true);}});
+show((parseInt(location.hash.slice(1),10)||1)-1);
+};script.onerror=()=>document.querySelector('#slides').textContent='Could not load this presentation. Keep the workshop files together.';document.body.append(script);
+</script></body></html>
