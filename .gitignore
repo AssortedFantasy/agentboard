@@ -1,0 +1,10 @@
+/target/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.exe
+__pycache__/
+
