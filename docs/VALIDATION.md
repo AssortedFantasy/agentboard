@@ -24,7 +24,7 @@ The native release executable was measured with 50 interleaved warm subprocess t
 
 These are Windows warm-start measurements on this machine, not cold-start guarantees or large-board throughput claims. Reproduce with `python scripts/benchmark_startup.py target/release/agentboard.exe`. Full samples and environment are in [startup-measurements.json](startup-measurements.json).
 
-## Linux and CI
+## Linux under WSL
 
 Ubuntu under WSL2, kernel 5.15.167.4-microsoft-standard-WSL2, Rust 1.98.1, `x86_64-unknown-linux-gnu`:
 
@@ -33,7 +33,19 @@ Ubuntu under WSL2, kernel 5.15.167.4-microsoft-standard-WSL2, Rust 1.98.1, `x86_
 - `cargo build --locked --release`: passed.
 - The stripped ELF release executable passed version, board initialization, post creation and full JSON reading smoke tests.
 
-Linux build tools and outputs were isolated in a task-specific cache directory without changing shell profiles. These results verify Ubuntu WSL2 execution, not every Linux distribution. macOS has not been executed locally. The Windows/Linux/macOS GitHub Actions workflow is ready in `ci/github-actions.yml`; publishing it under `.github/workflows` requires the token's missing workflow scope. No successful GitHub CI run is claimed.
+Linux build tools and outputs were isolated in a task-specific cache directory without changing shell profiles. These results verify Ubuntu WSL2 execution, not every Linux distribution.
+
+## GitHub Actions
+
+[Run 36381753590](https://github.com/AssortedFantasy/agentboard/actions/runs/36381753590) passed on 28 September 2026 for commit `d56a2fa3f426b5782de18ce77241264985673a38`. Each platform ran `cargo test --locked --release --all-targets`, including the real CLI subprocess and HTTP tests:
+
+| Runner | Tests | Job duration |
+| --- | ---: | ---: |
+| Windows | 84 passed | 4m 9s |
+| Ubuntu | 84 passed | 2m 54s |
+| macOS | 84 passed | 2m 27s |
+
+Formatting and strict Clippy also passed on Ubuntu. This is actual hosted execution on all three platforms. The earlier workflow authorization limitation was resolved. The run uploaded no artifacts and was the only run triggered by the source-branch push. See [CI controls](../ci/README.md) for trigger filters, cancellation, timeouts and storage policy. Subsequent documentation-only changes do not alter the tested source or workflow.
 
 ## Operational limits
 
