@@ -28,21 +28,35 @@ pub struct Output {
 
 impl Output {
     pub fn one(kind: &str, item: Value) -> Self {
-        Self { kind: kind.into(), items: vec![item], ..Self::default() }
+        Self {
+            kind: kind.into(),
+            items: vec![item],
+            ..Self::default()
+        }
     }
     pub fn list(kind: &str, items: Vec<Value>) -> Self {
-        Self { kind: kind.into(), items, ..Self::default() }
+        Self {
+            kind: kind.into(),
+            items,
+            ..Self::default()
+        }
     }
 }
 
 pub fn string(args: &Value, key: &str) -> anyhow::Result<String> {
-    args.get(key).and_then(Value::as_str).map(str::to_owned)
+    args.get(key)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
         .ok_or_else(|| anyhow::anyhow!("missing {key}"))
 }
 pub fn id(args: &Value, key: &str) -> anyhow::Result<i64> {
-    args.get(key).and_then(Value::as_i64)
+    args.get(key)
+        .and_then(Value::as_i64)
         .ok_or_else(|| anyhow::anyhow!("missing integer {key}"))
 }
 pub fn limit(args: &Value) -> usize {
-    args.get("limit").and_then(Value::as_u64).unwrap_or(50).min(100_000) as usize
+    args.get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(50)
+        .min(100_000) as usize
 }

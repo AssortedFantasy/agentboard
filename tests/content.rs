@@ -476,3 +476,187 @@ fn tree_keeps_visible_replies_when_their_parent_comment_is_archived() {
     assert!(tree.items.iter().any(|v| v["id"] == child));
     assert!(!tree.items.iter().any(|v| v["id"] == parent));
 }
+
+#[test]
+fn delivered_net_patches_advance_read_but_clipped_content_does_not() {
+    use agentboard::{app, render};
+    let mut conn = board();
+    let id = post(&mut conn, "Receipt integration", "old\n");
+    let shown = app::execute(
+        &mut conn,
+        "bob",
+        &Request {
+            command: "post.show".into(),
+            args: json!({"id":id}),
+        },
+    )
+    .unwrap();
+    let rendered = render::render(&shown, "text", false, 65_536).unwrap();
+    app::acknowledge(&mut conn, "bob", &rendered).unwrap();
+    run(
+        &mut conn,
+        "alice",
+        "post.edit",
+        json!({"id":id,"body":"new\n"}),
+    );
+    let updated = app::execute(
+        &mut conn,
+        "bob",
+        &Request {
+            command: "updates".into(),
+            args: json!({"kind":"post","full":true}),
+        },
+    )
+    .unwrap();
+    let rendered = render::render(&updated, "text", false, 65_536).unwrap();
+    assert!(rendered.text.contains("+new\n"));
+    assert!(!rendered.text.contains("\\n"));
+    app::acknowledge(&mut conn, "bob", &rendered).unwrap();
+    let baseline: i64 = conn
+        .query_row(
+            "SELECT read_revision FROM view_state WHERE agent='bob' AND object_id=?1",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(baseline, 2);
+    run(
+        &mut conn,
+        "alice",
+        "post.edit",
+        json!({"id":id,"body":"huge ".repeat(5000)}),
+    );
+    let shown = app::execute(
+        &mut conn,
+        "bob",
+        &Request {
+            command: "post.show".into(),
+            args: json!({"id":id}),
+        },
+    )
+    .unwrap();
+    let clipped = render::render(&shown, "text", false, 1024).unwrap();
+    assert!(clipped.receipts.is_empty());
+    app::acknowledge(&mut conn, "bob", &clipped).unwrap();
+    let baseline: i64 = conn
+        .query_row(
+            "SELECT read_revision FROM view_state WHERE agent='bob' AND object_id=?1",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(baseline, 2);
+}
+
+#[test]
+fn discussion_pages_hydrate_only_selected_bodies_in_both_views() {
+    use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let mut conn = board();
+    let id = post(&mut conn, "Large discussion", "root body");
+    for i in 0..40 {
+        run(
+            &mut conn,
+            "alice",
+            "comment.create",
+            json!({"post":id,"body":format!("comment {i}: {}","large ".repeat(1000))}),
+        );
+    }
+    let body_reads = Arc::new(AtomicUsize::new(0));
+    let reads = body_reads.clone();
+    conn.authorizer(Some(move |context: AuthContext<'_>| {
+        if let AuthAction::Read {
+            table_name: "objects",
+            column_name: "body",
+        } = context.action
+        {
+            reads.fetch_add(1, Ordering::Relaxed);
+        }
+        Authorization::Allow
+    }))
+    .unwrap();
+    for tree in [false, true] {
+        body_reads.store(0, Ordering::Relaxed);
+        let page = run(
+            &mut conn,
+            "bob",
+            "thread",
+            json!({"id":id,"tree":tree,"limit":3,"offset":10}),
+        );
+        assert_eq!(page.items.len(), 3);
+        assert!(page.more);
+        assert_eq!(
+            body_reads.load(Ordering::Relaxed),
+            3,
+            "only emitted objects may have their bodies read"
+        );
+    }
+    conn.authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
+        .unwrap();
+}
+
+#[test]
+fn task_round_trip_does_not_make_timestamp_only_net_changes() {
+    use agentboard::tasks;
+    let mut conn = board();
+    let created = tasks::execute(
+        &mut conn,
+        "alice",
+        &Request {
+            command: "task.create".into(),
+            args: json!({"title":"Transient claim"}),
+        },
+    )
+    .unwrap();
+    let id = created.items[0]["id"].as_i64().unwrap();
+    read(&conn, "bob", id, 1, 1);
+    // Ensure distinct observable timestamps without depending on test speed.
+    std::thread::sleep(std::time::Duration::from_millis(3));
+    for command in ["task.claim", "task.release"] {
+        tasks::execute(
+            &mut conn,
+            "alice",
+            &Request {
+                command: command.into(),
+                args: json!({"id":id}),
+            },
+        )
+        .unwrap();
+    }
+    let history = run(&mut conn, "bob", "history", json!({"id":id,"full":true}));
+    assert_ne!(
+        history.items[0]["snapshot"]["task"]["updated_at"],
+        history.items[2]["snapshot"]["task"]["updated_at"]
+    );
+    let diff = run(&mut conn, "bob", "diff", json!({"id":id}));
+    assert!(
+        diff.items[0]["changes"]["fields"]
+            .as_object()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        diff.items[0]["patch"]
+            .as_str()
+            .unwrap()
+            .contains("No content changes")
+    );
+}
+
+#[test]
+fn updates_pages_identify_themselves_for_pending_drain_guidance() {
+    let mut conn = board();
+    post(&mut conn, "First", "one");
+    post(&mut conn, "Second", "two");
+    let output = run(
+        &mut conn,
+        "bob",
+        "updates",
+        json!({"kind":"post","limit":1}),
+    );
+    assert_eq!(output.kind, "updates");
+    assert!(output.more);
+}

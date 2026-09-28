@@ -133,6 +133,17 @@ pub fn emit(
             }
         }
     }
+    if kind.starts_with("task.")
+        && let Some(previous_owner) = detail["previous_owner"].as_str()
+        && detail["owner"].as_str() != Some(previous_owner)
+    {
+        route(
+            &mut targets,
+            previous_owner.to_owned(),
+            "ownership_changed".into(),
+            true,
+        );
+    }
     if let Some(ref o) = object {
         if created || edited {
             let current = mentions(&format!("{}\n{}", o.title, o.body));

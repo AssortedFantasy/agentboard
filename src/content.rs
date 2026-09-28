@@ -470,7 +470,7 @@ fn list(
         .collect::<rusqlite::Result<_>>()?;
     let full = flag(args, "full") || (kind == Some("comment") && !flag(args, "compact"));
     let mut out = Output {
-        kind: "objects".into(),
+        kind: if updates { "updates" } else { "objects" }.into(),
         more: ids.len() > limit,
         ..Output::default()
     };
@@ -552,11 +552,19 @@ fn net_changes(
         "dependencies",
         "links",
     ] {
-        if old.get(key) != new.get(key) {
-            changes.insert(
-                key.into(),
-                json!({"before":old.get(key),"after":new.get(key)}),
-            );
+        let mut before = old.get(key).cloned();
+        let mut after = new.get(key).cloned();
+        if key == "task" {
+            // Task timestamps belong in history; a claim followed by release has
+            // no semantic net change when owner, state and dependencies agree.
+            for value in [&mut before, &mut after] {
+                if let Some(Value::Object(task)) = value {
+                    task.remove("updated_at");
+                }
+            }
+        }
+        if before != after {
+            changes.insert(key.into(), json!({"before":before,"after":after}));
         }
     }
     Ok(json!({"from_revision":from,"to_revision":to,"initial":from==0,"fields":changes}))
@@ -615,82 +623,113 @@ fn linked(conn: &Connection, args: &Value, back: bool) -> Result<Output> {
 
 fn thread(conn: &Connection, args: &Value) -> Result<Output> {
     let id = target(conn, args)?;
-    let object = db::get_object(conn, id)?;
+    // Determine the containing post without reading a body that may not belong
+    // to the requested page.
+    let (kind, parent): (String, Option<i64>) = conn
+        .query_row(
+            "SELECT kind,parent_id FROM objects WHERE id=?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?
+        .with_context(|| format!("object #{id} does not exist"))?;
     ensure!(
-        object["kind"] == "post" || object["kind"] == "comment",
+        kind == "post" || kind == "comment",
         "thread requires a post or comment ID"
     );
-    let post = if object["kind"] == "post" {
+    let post = if kind == "post" {
         id
     } else {
-        object["parent_id"]
-            .as_i64()
-            .context("comment has no post")?
+        parent.context("comment has no post")?
     };
-    let tree = flag(args, "tree") || object["kind"] == "comment";
-    let mut entries: Vec<(String, i64, Value)> = Vec::new();
-    let ids: Vec<i64> = if object["kind"] == "comment" {
-        conn.prepare("WITH RECURSIVE replies(id) AS (SELECT ?1 UNION ALL SELECT o.id FROM objects o JOIN replies r ON o.reply_to=r.id WHERE o.kind='comment') SELECT id FROM replies")?.query_map([id],|r|r.get(0))?.collect::<rusqlite::Result<_>>()?
-    } else {
-        conn.prepare("SELECT id FROM objects WHERE id=?1 OR (kind='comment' AND parent_id=?1)")?
-            .query_map([post], |r| r.get(0))?
-            .collect::<rusqlite::Result<_>>()?
-    };
-    for child in ids {
-        let item = db::get_object(conn, child)?;
-        if !flag(args, "all") && effectively_archived(conn, child)? {
-            continue;
-        }
-        entries.push((
-            item["created_at"].as_str().unwrap_or("").into(),
-            child,
-            item,
-        ));
-    }
-    if !tree {
-        let event_rows:Vec<(i64,String,String,String)>=conn.prepare("SELECT id,kind,detail,created_at FROM events WHERE post_id=?1 AND kind NOT IN ('post.created','comment.created') ORDER BY id")?.query_map([post],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?.collect::<rusqlite::Result<_>>()?;
-        for (event, kind, detail, at) in event_rows {
-            entries.push((at.clone(),event,json!({"kind":"system","event_id":event,"event_kind":kind,"detail":serde_json::from_str::<Value>(&detail)?,"created_at":at})));
-        }
-    }
-    entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-    let mut items: Vec<Value> = entries.into_iter().map(|e| e.2).collect();
-    if tree {
-        let source = std::mem::take(&mut items);
-        let visible: BTreeSet<i64> = source.iter().filter_map(|v| v["id"].as_i64()).collect();
-        let mut children = std::collections::BTreeMap::<i64, Vec<usize>>::new();
-        let mut roots = Vec::new();
-        for (index, item) in source.iter().enumerate() {
-            match item["reply_to"]
-                .as_i64()
-                .filter(|parent| visible.contains(parent))
-            {
-                Some(parent) if item["id"] != id => children.entry(parent).or_default().push(index),
-                _ => roots.push(index),
-            }
-        }
-        let mut stack: Vec<(usize, usize)> = roots.into_iter().rev().map(|i| (i, 0)).collect();
-        while let Some((index, depth)) = stack.pop() {
-            let mut item = source[index].clone();
-            item["depth"] = json!(depth);
-            if let Some(child_indices) = item["id"].as_i64().and_then(|id| children.get(&id)) {
-                stack.extend(child_indices.iter().rev().map(|i| (*i, depth + 1)));
-            }
-            items.push(item);
-        }
-    }
+    let tree = flag(args, "tree") || kind == "comment";
     let limit = model::limit(args);
-    let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
-    let more = items.len().saturating_sub(offset) > limit;
+    let offset = args
+        .get("offset")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .min(i64::MAX as u64) as i64;
+    let visibility = if flag(args, "all") {
+        "1".to_owned()
+    } else {
+        format!("NOT ({})", archive_predicate("o"))
+    };
+    // Entries contain only (object/event ID, system-event flag, tree depth).
+    // Hydrate bodies and event details only after selecting the requested page.
+    let entries: Vec<(i64, bool, usize)> = if !tree {
+        let sql = format!(
+            "SELECT id,system FROM (
+            SELECT o.id,0 AS system,o.created_at FROM objects o
+            WHERE (o.id=?1 OR (o.kind='comment' AND o.parent_id=?1)) AND {visibility}
+            UNION ALL
+            SELECT e.id,1 AS system,e.created_at FROM events e
+            WHERE e.post_id=?1 AND e.kind NOT IN ('post.created','comment.created')
+            ) ORDER BY created_at,id,system LIMIT ?2 OFFSET ?3"
+        );
+        conn.prepare(&sql)?
+            .query_map(params![post, (limit + 1) as i64, offset], |r| {
+                Ok((r.get(0)?, r.get(1)?, 0))
+            })?
+            .collect::<rusqlite::Result<_>>()?
+    } else {
+        let sql = if kind == "comment" {
+            format!("WITH RECURSIVE replies(id) AS (SELECT ?1 UNION ALL SELECT o.id FROM objects o JOIN replies r ON o.reply_to=r.id WHERE o.kind='comment')
+                SELECT o.id,o.reply_to FROM objects o JOIN replies r ON r.id=o.id WHERE {visibility} ORDER BY o.created_at,o.id")
+        } else {
+            format!(
+                "SELECT o.id,o.reply_to FROM objects o WHERE (o.id=?1 OR (o.kind='comment' AND o.parent_id=?1)) AND {visibility} ORDER BY o.created_at,o.id"
+            )
+        };
+        // Tree traversal needs relationships across the discussion, but never
+        // loads their bodies, tags, metadata, task state or revision snapshots.
+        let relationships: Vec<(i64, Option<i64>)> = conn
+            .prepare(&sql)?
+            .query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        let visible: BTreeSet<i64> = relationships.iter().map(|r| r.0).collect();
+        let mut children = std::collections::BTreeMap::<i64, Vec<i64>>::new();
+        let mut roots = Vec::new();
+        for (child, parent) in &relationships {
+            match parent.filter(|parent| visible.contains(parent)) {
+                Some(parent) if *child != id => children.entry(parent).or_default().push(*child),
+                _ => roots.push(*child),
+            }
+        }
+        let mut stack: Vec<(i64, usize)> = roots.into_iter().rev().map(|id| (id, 0)).collect();
+        let mut traversed = 0i64;
+        let mut selected = Vec::new();
+        while let Some((child, depth)) = stack.pop() {
+            if traversed >= offset {
+                selected.push((child, false, depth));
+            }
+            if selected.len() > limit {
+                break;
+            }
+            traversed += 1;
+            if let Some(child_ids) = children.get(&child) {
+                stack.extend(child_ids.iter().rev().map(|id| (*id, depth + 1)));
+            }
+        }
+        selected
+    };
     let mut out = Output {
         kind: "thread".into(),
-        more,
+        more: entries.len() > limit,
         ..Output::default()
     };
-    for item in items.into_iter().skip(offset).take(limit) {
-        if item["kind"] == "system" {
-            out.items.push(item);
+    for (id, system, depth) in entries.into_iter().take(limit) {
+        if system {
+            let (kind, detail, at): (String, String, String) = conn.query_row(
+                "SELECT kind,detail,created_at FROM events WHERE id=?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+            out.items.push(json!({"kind":"system","event_id":id,"event_kind":kind,"detail":serde_json::from_str::<Value>(&detail)?,"created_at":at}));
         } else {
+            let mut item = db::get_object(conn, id)?;
+            if tree {
+                item["depth"] = json!(depth);
+            }
             let (item, receipt) = present(item, !flag(args, "compact"));
             out.items.push(item);
             out.receipts.push(receipt);
