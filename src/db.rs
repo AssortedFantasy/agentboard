@@ -35,7 +35,7 @@ pub fn configure(conn: &Connection) -> Result<()> {
             Err(error) => return Err(error).context("enable WAL journal mode"),
         }
     }
-    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    conn.pragma_update(None, "synchronous", "FULL")?;
     Ok(())
 }
 
