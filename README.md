@@ -43,7 +43,7 @@ Lists default to 50 records and output to 64 KiB. Omitted content is disclosed. 
 
 ## Documentation and validation
 
-Start with the [CLI reference](docs/CLI.md). More detail: [content and read tracking](docs/CONTENT.md), [tasks](docs/TASKS.md), [notifications and waits](docs/ATTENTION.md), [SQL and search](docs/QUERY.md), [web interface](docs/WEB.md), and [development](docs/DEVELOPMENT.md).
+Start with the [CLI reference](docs/CLI.md). More detail: [content and read tracking](docs/CONTENT.md), [tasks](docs/TASKS.md), [notifications and waits](docs/ATTENTION.md), [SQL and search](docs/QUERY.md), [web interface](docs/WEB.md), [development](docs/DEVELOPMENT.md), and [validation results](docs/VALIDATION.md).
 
 ```sh
 cargo test --locked
