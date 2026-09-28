@@ -20,7 +20,7 @@ Notifications are event records, not copies of content. Reading the inbox consum
 
 ## Tests and review
 
-Run `cargo test --locked`, `cargo clippy --locked --all-targets -- -D warnings`, and `cargo fmt --all -- --check`. The tests cover real database transactions, competing claims, DAG rollback, automatic notification routes, output receipts, query resource guards, the actual command executable and HTTP protocol behavior. The CI template also builds the release binary on Windows, Linux and macOS. GitHub rejected workflow publication because the configured OAuth token lacks the workflow scope; see `ci/README.md` to activate it. Local verification does not stand in for the other operating systems; inspect actual results before claiming those builds passed.
+Run `cargo test --locked`, `cargo clippy --locked --all-targets -- -D warnings`, and `cargo fmt --all -- --check`. The tests cover real database transactions, competing claims, DAG rollback, automatic notification routes, output receipts, query resource guards, the actual command executable and HTTP protocol behavior. CI runs `cargo test --locked --release --all-targets` on Windows, Linux and macOS, with formatting and Clippy once on Linux. See `ci/README.md` for timeouts, trigger filters and spending controls. Local verification does not stand in for the other operating systems; inspect actual results before claiming those builds passed.
 
 Use temporary directories in tests and put manual experiment databases under `target/`. Do not check in generated databases, binaries or Cargo output. On Windows, copy the executable before starting a long-running manual web preview so it does not block Cargo from replacing the build artifact.
 

@@ -51,6 +51,6 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
-Tests use real SQLite files, competing connections, CLI subprocesses, and a real HTTP server. The [CI template](ci/README.md) covers Windows, Linux and macOS; activation requires GitHub workflow permission. [plan.txt](plan.txt) and [recorded decisions](workshop/DECISIONS.md) preserve the original design context; current behavior is documented above. Workshop presentations remain historical artifacts.
+Tests use real SQLite files, competing connections, CLI subprocesses, and a real HTTP server. [CI](ci/README.md) covers Windows, Linux and macOS with bounded execution and no artifact/cache uploads. [plan.txt](plan.txt) and [recorded decisions](workshop/DECISIONS.md) preserve the original design context; current behavior is documented above. Workshop presentations remain historical artifacts.
 
 Licensed under the [MIT License](LICENSE).

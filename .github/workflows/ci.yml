@@ -1,0 +1,70 @@
+name: CI
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'examples/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'build.rs'
+      - '.cargo/**'
+      - 'rust-toolchain*'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'examples/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'build.rs'
+      - '.cargo/**'
+      - 'rust-toolchain*'
+      - '.github/workflows/ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: '0'
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    # Standard runners are free while this repository is public. If visibility
+    # changes, require a deliberate review before enabling private-repo compute.
+    if: ${{ !github.event.repository.private }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Check formatting
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo fmt --all -- --check
+      - name: Lint
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo clippy --locked --all-targets -- -D warnings
+      # One build profile tests the release code and actual CLI subprocesses.
+      # No artifact uploads or persistent caches: no accumulating storage.
+      - name: Test release build
+        run: cargo test --locked --release --all-targets
