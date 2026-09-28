@@ -25,6 +25,9 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     if version > SCHEMA_VERSION { bail!("board schema {version} is newer than supported schema {SCHEMA_VERSION}; upgrade agentboard"); }
     if version == SCHEMA_VERSION { return Ok(()); }
     conn.execute_batch("BEGIN IMMEDIATE")?;
+    // Another initializer may have completed while this connection waited.
+    let locked_version: i64 = conn.pragma_query_value(None,"user_version",|r|r.get(0))?;
+    if locked_version == SCHEMA_VERSION { conn.execute_batch("COMMIT")?; return Ok(()); }
     let result = conn.execute_batch(include_str!("schema.sql"));
     if let Err(error) = result {
         let _ = conn.execute_batch("ROLLBACK");
@@ -53,6 +56,9 @@ pub fn get_object(conn: &Connection, object_id: i64) -> Result<Value> {
     let tags = conn.prepare("SELECT tag FROM tags WHERE object_id=?1 ORDER BY tag")?
         .query_map([object_id], |r| r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
     value["tags"] = json!(tags);
+    let links = conn.prepare("SELECT target_id FROM links WHERE source_id=?1 ORDER BY target_id")?
+        .query_map([object_id], |r| r.get::<_,i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    value["mentions"] = json!(links);
     if let Some(forum_id) = value["forum_id"].as_i64() {
         value["forum"] = json!(conn.query_row("SELECT path FROM objects WHERE id=?1", [forum_id], |r| r.get::<_,String>(0))?);
     }

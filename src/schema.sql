@@ -32,6 +32,7 @@ CREATE TABLE notifications(id INTEGER PRIMARY KEY AUTOINCREMENT,agent TEXT NOT N
 CREATE INDEX notifications_pending ON notifications(agent,seen_at,inbox,id);
 CREATE TABLE command_log(id INTEGER PRIMARY KEY AUTOINCREMENT,agent TEXT NOT NULL,command TEXT NOT NULL,args TEXT NOT NULL DEFAULT '{}',success INTEGER NOT NULL,error TEXT,duration_ms INTEGER NOT NULL,object_ids TEXT NOT NULL DEFAULT '[]',created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')));
 CREATE TABLE config(key TEXT PRIMARY KEY,value TEXT NOT NULL CHECK(json_valid(value)));
+CREATE TABLE agent_revisions(id INTEGER PRIMARY KEY AUTOINCREMENT,agent TEXT NOT NULL REFERENCES agents(name),profile TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')));
 CREATE VIEW posts AS SELECT o.*,f.path AS forum FROM objects o LEFT JOIN objects f ON f.id=o.forum_id WHERE o.kind='post';
 CREATE VIEW comments AS SELECT o.*,o.parent_id AS post_id,f.path AS forum FROM objects o LEFT JOIN objects f ON f.id=o.forum_id WHERE o.kind='comment';
 CREATE VIEW forums AS SELECT * FROM objects WHERE kind='forum';
